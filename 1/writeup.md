@@ -105,11 +105,96 @@ naalexeev@titanic:~ $ cp /home/clauter/nanpa ~/napa
 
 ## 4. On titanic or  a  private  Linux  installation,  open  the  file nanpa using less.   The  file  contains  quite  acomprehensive list of North American phone number prefixes (first 6 digits, excluding+1), followed by thelocation this phone number prefix is attached to.  For example, for 907519, the location Anchorage AKislisted. Still insideless, find the entries for 907519,503526 and a couple of other phone numbers you knowin the country, as such your home phone, your parents’ phone, the phone of a loved one etc.
 
-## 5. Find  out  how  many  lines  connecting  prefixes  to  locations  are  contained  in  the  filenanpa.   Which  Linuxcommand line tool do you use to count lines?
+I used / to forward search for 907519, then ? to backward search for 503526, then searched for a couple other phone number prefixes using / and ? as needed.
+```
+907519Anchorage AK
+503526Beaverton OR
+907891Anchorage AK
+508829Holden MA
+```
+
+## 5. Find  out  how  many  lines  connecting  prefixes  to  locations  are  contained  in  the  filenanpa.   Which  Linux command line tool do you use to count lines?
+
+I used `wc -l nanpa` to get the number of lines in nanpa
+```
+eshazelton@titanic:~ $ wc -l nanpa
+166482 nanpa
+```
 
 ## 6. List the first 17 lines of the nanpa file on command line. Also list the last 42 lines of the file. You can use the Linux tools head and tailfor this task.
 
+I used `head nanpa -n 17` to get the first 17 lines in the file.
+```
+eshazelton@titanic:~ $ head nanpa -n 17
+201200Jersey City NJ           
+201202Hackensack NJ            
+201203Hackensack NJ            
+201204Jersey City NJ           
+201205Jersey City NJ           
+201206Hackensack NJ            
+201207Newark NJ                
+201208Jersey City NJ           
+201209Jersey City NJ           
+201210Union City NJ            
+201212Hackensack NJ            
+201213Morristown NJ            
+201214Hackensack NJ            
+201215Bayonne NJ               
+201216Jersey City NJ           
+201217Jersey City NJ           
+201218Hackensack NJ
+```
+
+I used `tail nanpa -n 42` to get the last 42 lines in the file.
+```
+eshazelton@titanic:~ $ tail nanpa -n 42
+989921Saginaw MI               
+989922Bay City MI              
+989923Midland MI               
+989924Alma MI                  
+989925Manistee Ri MI           
+989926Midland MI               
+989928Saginaw MI               
+989929Bay City MI              
+989932Durand MI                
+989934Rose City MI             
+989935Clare MI                 
+989936Owosso MI                
+989938Grace Harbo MI           
+989939Chester MI               
+989941Midland MI               
+989942West Branch MI           
+989943Middleton MI             
+989944Mount Pleas MI           
+989945Ovid MI                  
+989946Standish MI              
+989948Midland MI               
+989949McBrides MI              
+989953Mount Pleas MI           
+989954Mount Pleas MI           
+989956Mount Pleas MI           
+989962Minden City MI           
+989963Elkton MI                
+989964Saginaw MI               
+989965Gladwin MI               
+989966Vanderbilt MI            
+989967Remus MI                 
+989968Alma MI                  
+989971Saginaw MI               
+989975Bad Axe MI               
+989977Sebewaing MI             
+989979St Johns MI              
+989980Saginaw MI               
+989981Hubbardston MI           
+989983Vanderbilt MI            
+989984East Tawas MI            
+989992Saginaw MI               
+989996Saginaw MI                
+```
+
 ## 7. Write a short bash script findlocation that takes a 6-digit prefix in argument and displays the correspond-ing location. If the script receives no argument or the argument is not a6-digit prefix made only out of the digits 0 thru 9, the script must return an exit condition code signaling failure (e.g.  by executingexit 1).  If thescript receives a correctly formatted argument but the prefix is not found in the nanpa file, the script must returnan exit condition code signaling failure. Otherwise, the script must display the appropriate location (on stdout).The location must not be prefixed by the prefix nor followed by superfluous spaces.  This means you have to format the line found thenanpafile before displaying it. You may use grep and sed for this script.
+
+See findlocation.sh
 
 # 3. Rewrite head and tail
 
