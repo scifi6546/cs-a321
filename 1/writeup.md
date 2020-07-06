@@ -192,10 +192,10 @@ eshazelton@titanic:~ $ tail nanpa -n 42
 989996Saginaw MI                
 ```
 
-## 7. Write a short bash script findlocation that takes a 6-digit prefix in argument and displays the correspond-ing location. If the script receives no argument or the argument is not a6-digit prefix made only out of the digits 0 thru 9, the script must return an exit condition code signaling failure (e.g.  by executingexit 1).  If thescript receives a correctly formatted argument but the prefix is not found in the nanpa file, the script must returnan exit condition code signaling failure. Otherwise, the script must display the appropriate location (on stdout).The location must not be prefixed by the prefix nor followed by superfluous spaces.  This means you have to format the line found thenanpafile before displaying it. You may use grep and sed for this script.
+## 7. Write a short bash script findlocation that takes a 6-digit prefix in argument and displays the correspond-ing location. If the script receives no argument or the argument is not a6-digit prefix made only out of the digits 0 thru 9, the script must return an exit condition code signaling failure (e.g.  by executing exit 1).  If thescript receives a correctly formatted argument but the prefix is not found in the nanpa file, the script must returnan exit condition code signaling failure. Otherwise, the script must display the appropriate location (on stdout).The location must not be prefixed by the prefix nor followed by superfluous spaces.  This means you have to format the line found thenanpafile before displaying it. You may use grep and sed for this script.
 
 See findlocation.sh
 
 # 3. Rewrite head and tail
-
+I rewrote head and tail using only direct syscalls. I first worte a simple standard library and then used the standard library as a foundation for head.c and tail.c. A major pain point was manual memory management. The memory management was error prone and it required significant debugging. See head.c, tail.c and my_stdlib.h for the source code.
 # 4. File Searching
