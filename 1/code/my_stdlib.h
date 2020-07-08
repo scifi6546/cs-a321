@@ -16,7 +16,10 @@ size_t strlen(const char *str){
 	return len;
 }
 void error(char* str){
-	write(2,str,strlen(str));
+	return_code=1;
+	if(write(2,str,strlen(str))){
+		return_code=1;
+	}
 }
 void print(char* str){
 	if(str==NULL){
@@ -24,14 +27,20 @@ void print(char* str){
 		return;
 
 	}
-	write(1,str,strlen(str));
+	if(write(1,str,strlen(str))){
+		error("failed to write to stdio\n");
+
+	}
 }
 void print_index(char* str,ssize_t start,ssize_t end){
 	if(strlen(str)<end){
 		error("Error invalid end size");
 		return;
 	}
-	write(1,str+start,end-start);
+	if(write(1,str+start,end-start)==-1){
+		error("failed to write to stdio\n");
+
+	}
 
 }
 //returns 1 if the strings are equal 0 if they are not
@@ -87,7 +96,7 @@ char* load_file(char* f_name){
 	if(alloc_size<read_size+1){
 		char* new_buff = (char*) realloc(buff,read_size+1);
 		if(new_buff==NULL){
-			//todo handle error condition
+			error("Failure in allocation\n");
 		}else{
 			buff = new_buff;
 			alloc_size=read_size+1;
