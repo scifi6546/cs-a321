@@ -48,7 +48,7 @@ int main(int argc, char **argv) {
     }
 
     // Try to open the file
-    fd = open(argv[0], O_RDONLY);
+    fd = open(argv[1], O_RDONLY);
 
     if (fd < 0) {
         fprintf(stderr, "Could not open up file %s: %s\n", file_path, strerror(errno));
@@ -107,9 +107,10 @@ int binarySearch(char arr[], int start_line, int stop_line, int target) {
 
     int center, center_prefix;
 
-    if (stop_line >= start_line) {
+
+    if (stop_line > start_line) {
         
-        center = (start_line + (stop_line - 1))>>1;
+        center = (start_line + stop_line)/2;
 
         center_prefix = getPrefix(arr, center);
 
@@ -117,11 +118,12 @@ int binarySearch(char arr[], int start_line, int stop_line, int target) {
             return center;
         }
 
-        if (center_prefix > target) {
-            return binarySearch(arr, start_line, center - 1, target);
+	printf("prefix: %i target: %i center: %i start: %i stop: %i\n",center_prefix,target,center,start_line,stop_line);
+        if (center_prefix < target) {
+            return binarySearch(arr, center+1, stop_line, target);
         }
 
-        return binarySearch(arr, center + 1, stop_line, target);
+        return binarySearch(arr, start_line,center, target);
     }
 
     return -1;
@@ -133,11 +135,11 @@ int getPrefix(char arr[], int location) {
 
     for (int i = 0; i < 6; i++) {
 
-        *(str + i) = arr[i + (location<<5)];
+        str[i] = arr[i + (location*32)];
 
     }
 
-    str[6] = '\n';
+    str[6] = '\0';
     
     return atoi(str);
 }
