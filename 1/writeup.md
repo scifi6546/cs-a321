@@ -199,3 +199,4 @@ See findlocation.sh
 # 3. Rewrite head and tail
 I rewrote head and tail using only direct syscalls. I first worte a simple standard library and then used the standard library as a foundation for head.c and tail.c. A major pain point was manual memory management. The memory management was error prone and it required significant debugging. See head.c, tail.c and my_stdlib.h for the source code.
 # 4. File Searching
+I rewrote findlocation in c. The main difficulty was string manipulation.  

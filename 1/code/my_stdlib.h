@@ -27,10 +27,7 @@ void print(char* str){
 		return;
 
 	}
-	if(write(1,str,strlen(str))){
-		error("failed to write to stdio\n");
-
-	}
+	write(1,str,strlen(str));
 }
 void print_index(char* str,ssize_t start,ssize_t end){
 	if(strlen(str)<end){
