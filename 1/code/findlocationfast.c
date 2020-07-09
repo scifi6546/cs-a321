@@ -71,7 +71,7 @@ int main(int argc, char **argv) {
     }
     // Quick checking if it worked.
     cityname = file + (target_location<<5) + 6;
-    print(cityname);
+    print_index(cityname,0,25);
     if (munmap(file, size) < 0) {
         error("Could not unmap the file from memory: ");
         error(strerror(errno));
