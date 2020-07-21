@@ -1,6 +1,5 @@
 /************************
  * Nick Alexeev         *
- * Edward Hazelton      *
  * Prof. C. Lauter      *
  * CSCE A321            *
  * Assignment #1        *

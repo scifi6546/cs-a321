@@ -1,3 +1,10 @@
+/************************
+ * Nick Alexeev         *
+ * Prof. C. Lauter      *
+ * CSCE A321            *
+ * Assignment #1        *
+ * Due: July 9th, 2020  *
+ ************************/
 #include <sys/types.h>
 #include <fcntl.h>
 #include <sys/stat.h>
