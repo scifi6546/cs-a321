@@ -253,6 +253,8 @@ struct DirEntry{
 	enum FileType file_type;
 	char linked_file[MAX_PATH_LEN];
 	size_t file_block;
+	const struct timespec atime;
+	const struct timespec mtime;
 };
 //BLOCK LAYOUT
 //
@@ -396,7 +398,33 @@ int __myfs_getattr_implem(void *fsptr, size_t fssize, int *errnoptr,
                           uid_t uid, gid_t gid,
                           const char *path, struct stat *stbuf) {
   /* STUB */
-  return -1;
+	*errnoptr=0;
+	try_build(fsptr,fssize,errnoptr);
+	if(errnoptr!=0){
+		return -1;
+	}
+	struct DirEntry f = find_path(fsptr,fssize,errnoptr,path);
+	if(errnoptr!=0){
+		return -1;
+	}
+	if(f.file_type==Directory){
+		size_t len = 0;
+		free(load_mem(fsptr,fssize,errnoptr,f.file_block,&len));
+		stbuf->st_nlink=len/sizeof(struct DirEntry);
+		stbuf->st_mode=S_IFDIR | 0755;
+	}
+	if(f.file_type==File){
+		size_t len = 0;
+		free(load_mem(fsptr,fssize,errnoptr,f.file_block,&len));
+		stbuf->st_size=len;
+		stbuf->st_mode=S_IFREG | 0755;
+	}
+	stbuf->st_atim = f.atime;
+	stbuf->st_mtim = f.mtime;
+	stbuf->st_uid=uid;
+	stbuf->st_gid=gid;
+
+	return 0;
 }
 
 /* Implements an emulation of the readdir system call on the filesystem 
