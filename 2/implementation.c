@@ -36,6 +36,7 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <stdio.h>
+#include <assert.h>
 
 
 /* The filesystem you implement must support all the 13 operations
@@ -231,10 +232,139 @@
 */
 
 /* Helper types and functions */
+struct FAT_ENTRY{
+	unsigned short used_size;
+	unsigned short is_used;
+	unsigned int next_block;
 
-/* YOUR HELPER FUNCTIONS GO HERE */
+};
+#define FAT_SIZE sizeof(struct FAT_ENTRY)
+#define HEADER_SIZE 8
+#define BLOCK_SIZE 4096
+#define MAX_NAME_SIZE 32
+#define MAX_PATH_LEN 255
+
+size_t get_fat_size(void *fsptr,size_t fssize,int *errnoptr){
+	return (fssize-HEADER_SIZE)/(FAT_SIZE+BLOCK_SIZE);
+}
+enum FileType{Directory,Link,File};
+struct DirEntry{
+	char file_name[MAX_NAME_SIZE];
+	enum FileType file_type;
+	char linked_file[MAX_PATH_LEN];
+	size_t file_block;
+};
+//BLOCK LAYOUT
+//
+//checks if the fs is built if it is invalid then try to build it
+void try_build(void *fsptr, size_t fssize,int *errnoptr){
+	unsigned long* ul_fsptr = fsptr;
+	if(ul_fsptr[0]==0x00000005c1f16546){
+		//already setup do nothing
+		return;
+	}
+	struct FAT_ENTRY* fat_fsptr = ((char*) fsptr+HEADER_SIZE);
+	size_t fat_size = get_fat_size(fsptr,fssize,errnoptr);
+	for(size_t i =0;i<fat_size;i++){
+		fat_fsptr[i].used_size=0;
+		fat_fsptr[i].is_used=0;
+		fat_fsptr[i].next_block=0;
+	}
+
+
+}
+	
+struct FAT_ENTRY get_fat(void* fsptr,size_t fssize,int *errnoptr,size_t fat_num){
+	char* c_fsptr = fsptr;
+	c_fsptr+=HEADER_SIZE;
+	struct FAT_ENTRY* f_fsptr = c_fsptr;
+	return f_fsptr[fat_num];
+	
+
+}
+//does not allocate anu new bytes
+void* load_block(void *fsptr,size_t fssize,int* errnoptr,size_t block_num,size_t* mem_size){
+	struct FAT_ENTRY fat = get_fat(fsptr,fssize,errnoptr,block_num);
+	char* c_fsptr = fsptr;
+	fsptr+=HEADER_SIZE+FAT_SIZE*get_fat_size(fsptr,fssize,errnoptr);
+	fsptr+=block_num*BLOCK_SIZE;
+	mem_size[0]=fat.used_size;
+	return fsptr;
+}
+void* load_mem(void *fsptr,size_t fssize,int *errnoptr,size_t block_number,size_t *mem_size){
+	//stub todo
+	size_t current_block=block_number;
+	char* data=NULL;
+	*mem_size=0;
+	while(1){
+		struct FAT_ENTRY fat =get_fat(fsptr,fssize,errnoptr,current_block);
+		size_t t_mem_size=0;
+		char* t_data = load_block(fsptr,fssize,errnoptr,current_block,t_mem_size);
+		data = realloc(data,t_mem_size+mem_size);
+		memcpy(data+*mem_size,t_data,t_mem_size);
+		if(fat.next_block==0){
+			break;
+		}
+		current_block=fat.next_block;
+	}
+	return data;
+
+	
+	
+
+}
+//finds dir entry at path. if none is found errno is populated as nessacary
+struct DirEntry find_path(void *fsptr,size_t fssize,int *errnoptr,char *path){
+	size_t current_block = 0;
+	assert(path[0]=='/');
+	struct DirEntry* dir = NULL;
+	size_t dir_size;
+	char* fname = strtok(path,"/");
+	while(fname!=NULL){
+		free(dir);
+		dir = load_mem(fsptr,fssize,errnoptr,current_block,&dir_size);
+		int found=0;
+		for(ssize_t i=0;i<dir_size;i++){
+			if(strcmp(fname,dir[i].file_name)){
+				if(dir[i].file_type==Directory){
+					current_block=dir[i].file_block;
+					found=1;
+				}else{
+					errnoptr[0]=ENOTDIR;
+					return;
+
+				}
+			}
+		}
+		if(found==0){
+			errnoptr=ENOTDIR;
+			return;
+
+		}
+		fname=strtok(NULL,"/");
+	}
+	for(ssize_t i=0;i<dir_size;i++){
+		if(strcmp(fname,dir[i].file_name)){
+			if(dir[i].file_type==Directory){
+				struct DirEntry ret = dir[i];
+				free(dir);
+				return ret;
+			}else{
+				errnoptr=ENOTDIR;
+				return;
+
+			}
+		}
+	}
+	errnoptr[0]=ENOTDIR;
+	return;
+
+}
+
+
 
 /* End of helper functions */
+
 
 /* Implements an emulation of the stat system call on the filesystem 
    of size fssize pointed to by fsptr. 
