@@ -392,11 +392,9 @@ int append_data(void *fsptr,size_t fssize,int* errnoptr,size_t block,size_t appe
 		}
 	}
 	return -1;
-	
-
 }
+//loads data at block
 void* load_mem(void *fsptr,size_t fssize,int *errnoptr,size_t block_number,size_t *mem_size){
-	//stub todo
 	size_t current_block=block_number;
 	char* data=NULL;
 	*mem_size=0;
@@ -420,10 +418,17 @@ void* load_mem(void *fsptr,size_t fssize,int *errnoptr,size_t block_number,size_
 }
 //finds dir entry at path. if none is found errno is populated as nessacary
 struct DirEntry find_path(void *fsptr,size_t fssize,int *errnoptr,const char *path){
+	//hardcode Root
+	if(strcmp(path,"/")==0){
+		struct DirEntry root;
+		root.file_type=Directory;
+		root.file_block=0;
+		return root;
+	}
 	size_t current_block = 0;
 	assert(path[0]=='/');
 	struct DirEntry* dir = NULL;
-	size_t dir_size;
+	size_t dir_size=0;
 	char *t_path = calloc(strlen(path),1);
 	strcpy(t_path,path);
 	char* fname = strtok(t_path,"/");
@@ -432,7 +437,7 @@ struct DirEntry find_path(void *fsptr,size_t fssize,int *errnoptr,const char *pa
 		dir = load_mem(fsptr,fssize,errnoptr,current_block,&dir_size);
 		int found=0;
 		for(ssize_t i=0;i<dir_size;i++){
-			if(strcmp(fname,dir[i].file_name)){
+			if(strcmp(fname,dir[i].file_name)==0){
 				if(dir[i].file_type==Directory){
 					current_block=dir[i].file_block;
 					found=1;
@@ -454,10 +459,15 @@ struct DirEntry find_path(void *fsptr,size_t fssize,int *errnoptr,const char *pa
 			return t;
 
 		}
-		fname=strtok(NULL,"/");
+		char* temp = strtok(NULL,"/");
+		if(temp==NULL){
+			break;
+		}else{
+			fname=temp;
+		}
 	}
 	for(ssize_t i=0;i<dir_size;i++){
-		if(strcmp(fname,dir[i].file_name)){
+		if(strcmp(fname,dir[i].file_name)==0){
 			if(dir[i].file_type==Directory){
 				struct DirEntry ret = dir[i];
 				free(dir);
@@ -588,9 +598,30 @@ int __myfs_getattr_implem(void *fsptr, size_t fssize, int *errnoptr,
 int __myfs_readdir_implem(void *fsptr, size_t fssize, int *errnoptr,
                           const char *path, char ***namesptr) {
   /* STUB */
+	*errnoptr=0;
+	struct DirEntry d = find_path(fsptr,fssize,errnoptr,path);
+	if(*errnoptr!=0){
+		return -1;
+
+	}
+	if(d.file_type!=Directory){
+		*errnoptr=ENOTDIR;
+		return -1;
+	}
+
+	size_t memory_size=0;
+	struct DirEntry* dirs = load_mem(fsptr,fssize,errnoptr,d.file_block,&memory_size);	
+	if(*errnoptr!=0){
+		return -1;
+	}
+
+	namesptr=calloc(memory_size/sizeof(struct DirEntry),sizeof(char*));
+	for(size_t i=0;i<memory_size/sizeof(struct DirEntry);i++){
+		namesptr[i]=calloc(MAX_NAME_SIZE,sizeof(char));
+		memcpy(namesptr[i],dirs[i].file_name,MAX_NAME_SIZE);
+
+	}
 	return 0;
-	assert(1==0);
-  return -1;
 }
 
 /* Implements an emulation of the mknod system call for regular files
@@ -612,6 +643,41 @@ int __myfs_readdir_implem(void *fsptr, size_t fssize, int *errnoptr,
 */
 int __myfs_mknod_implem(void *fsptr, size_t fssize, int *errnoptr,
                         const char *path) {
+	*errnoptr=0;
+	try_build(fsptr,fssize,errnoptr);
+	if(errnoptr!=0){
+		return -1;
+	}
+	//1. strip off last part of path
+	//a. finding last /
+	size_t last = strrchr(path,'/')-path;
+	char* t_path = calloc(last+1,1);
+	memcpy(t_path,path,last);
+	t_path[last+1]=0;
+	struct DirEntry f = find_path(fsptr,fssize,errnoptr,t_path);
+	if(errnoptr!=0){
+		return -1;
+	}
+	//Next build new dir entry
+	size_t next_dir_len = strlen(path)-1-last;
+	if(next_dir_len>MAX_NAME_SIZE){
+		errnoptr[0]=ENAMETOOLONG;
+		return -1;
+
+	}
+	
+	struct DirEntry new_f;
+	memcpy(new_f.file_name,path+last+1,strlen(path)-last);
+	new_f.file_type=File;
+	new_f.file_block=alloc_block(fsptr,fssize,errnoptr);
+	struct FAT_ENTRY* fat = get_fat(fsptr,fssize,errnoptr,new_f.file_block);
+	fat->used_size=0;
+
+
+	
+	//Finally append
+	append_data(fsptr,fssize,errnoptr,f.file_block,sizeof(struct DirEntry),&new_f);
+	return 0;
   /* STUB */
 	assert(1==0);
   return -1;
