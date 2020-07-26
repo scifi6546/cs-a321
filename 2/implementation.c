@@ -254,9 +254,18 @@ struct DirEntry{
 	enum FileType file_type;
 	char linked_file[MAX_PATH_LEN];
 	size_t file_block;
-	const struct timespec atime;
-	const struct timespec mtime;
+	struct timespec atime;
+	struct timespec mtime;
 };
+void copy_dir_entry(struct DirEntry* dest,struct DirEntry *src){
+	memcpy(dest->file_name,src->file_name,MAX_NAME_SIZE);
+	dest->file_type=src->file_type;
+	memcpy(dest->linked_file,src->linked_file,MAX_PATH_LEN);
+	dest->file_block=src->file_block;
+	dest->atime = src->atime;
+	dest->mtime = src->mtime;
+
+}
 //BLOCK LAYOUT
 //
 //checks if the fs is built if it is invalid then try to build it
@@ -375,21 +384,21 @@ int free_data(void* fsptr,size_t fssize,int* errnoptr,size_t block){
 
 }
 void* read_data(void* fsptr,size_t fssize,int* errnoptr,size_t block,size_t start,size_t read_len){
-	size_t current_block=block_number;
+	size_t current_block=block;
 	char* data=NULL;
 	size_t read_size=0;
 	int mem_size=0;
-	int break=0;
-	while(break==0){
+	int will_break=0;
+	while(will_break==0){
 		struct FAT_ENTRY* fat =get_fat(fsptr,fssize,errnoptr,current_block);
 		size_t t_mem_size=0;
 		char* t_data = load_block(fsptr,fssize,errnoptr,current_block,&t_mem_size);
-		if(t_mem_size+read_size>=start_index){
-			size_t read_index=start-size_read;
+		if(t_mem_size+read_size>=start){
+			size_t start_index=start-read_size;
 			size_t end_index = t_mem_size;
-			if(end_index-read_index>read_len){
+			if(end_index-read_size>read_len){
 				end_index=start_index+read_len;
-				break=1;
+				will_break=1;
 			}
 			data= realloc(data,mem_size+end_index-start_index);
 			memcpy(data,t_data+start_index,end_index-start_index);
@@ -397,7 +406,7 @@ void* read_data(void* fsptr,size_t fssize,int* errnoptr,size_t block,size_t star
 		if(fat->next_block!=0){
 			current_block=fat->next_block;
 		}else{
-			errnoptr=1;
+			*errnoptr=1;
 			return NULL;
 
 		}
@@ -405,29 +414,27 @@ void* read_data(void* fsptr,size_t fssize,int* errnoptr,size_t block,size_t star
 	return data;
 
 }
-int read_data(void* fsptr,size_t fssize,int* errnoptr,size_t block,size_t start,size_t read_len,void* to_write){
+int write_data(void* fsptr,size_t fssize,int* errnoptr,size_t block_number,size_t start,size_t read_len,const void* to_write){
 	size_t current_block=block_number;
-	char* data=NULL;
 	size_t read_size=0;
-	int mem_size=0;
-	int break=0;
-	while(break==0){
+	int will_break=0;
+	while(will_break==0){
 		struct FAT_ENTRY* fat =get_fat(fsptr,fssize,errnoptr,current_block);
 		size_t t_mem_size=0;
 		char* t_data = load_block(fsptr,fssize,errnoptr,current_block,&t_mem_size);
-		if(t_mem_size+read_size>=start_index){
-			size_t read_index=start-size_read;
+		if(t_mem_size+read_size>=start){
+			size_t start_index=start-read_size;
 			size_t end_index = t_mem_size;
-			if(end_index-read_index>read_len){
+			if(end_index-start_index>read_len){
 				end_index=start_index+read_len;
-				break=1;
+				will_break=1;
 			}
 			memcpy(t_data+start_index,to_write,end_index-start_index);
 		}
 		if(fat->next_block!=0){
 			current_block=fat->next_block;
 		}else{
-			errnoptr=1;
+			*errnoptr=1;
 			return -1;
 
 		}
@@ -509,7 +516,7 @@ size_t get_size(void* fsptr,size_t fssize,int*errnoptr,size_t block_number){
 	size_t size=0;
 	while(1){
 		struct FAT_ENTRY* fat =get_fat(fsptr,fssize,errnoptr,current_block);
-		size+=fat.used_size;
+		size+=fat->used_size;
 		if(fat->next_block==0){
 			break;
 		}
@@ -520,7 +527,64 @@ size_t get_size(void* fsptr,size_t fssize,int*errnoptr,size_t block_number){
 
 }
 //finds dir entry at path. if none is found errno is populated as nessacary
-struct DirEntry* find_path(void *fsptr,size_t fssize,int *errnoptr,const char *path){
+int write_path(void *fsptr,size_t fssize,int *errnoptr,const char *path,struct DirEntry to_write){
+	//hardcode Root
+	if(strcmp(path,"/")==0){
+		*errnoptr=ENOTDIR;
+		return -1;
+	}
+	size_t current_block = 0;
+	assert(path[0]=='/');
+	struct DirEntry* dir = NULL;
+	size_t dir_size=0;
+	char *t_path = calloc(strlen(path),1);
+	strcpy(t_path,path);
+	char* fname = strtok(t_path,"/");
+	while(fname!=NULL){
+		free(dir);
+		dir = load_mem(fsptr,fssize,errnoptr,current_block,&dir_size);
+		int found=0;
+		for(ssize_t i=0;i<dir_size;i++){
+			if(strcmp(fname,dir[i].file_name)==0){
+				if(dir[i].file_type==Directory){
+					current_block=dir[i].file_block;
+					found=1;
+				}else{
+					*errnoptr=ENOTDIR;
+					return -1;
+
+				}
+			}
+		}
+		if(found==0){
+			*errnoptr=ENOTDIR;
+			return -1;
+
+		}
+		char* temp = strtok(NULL,"/");
+		if(temp==NULL){
+			break;
+		}else{
+			fname=temp;
+		}
+	}
+	for(ssize_t i=0;i<dir_size;i++){
+		if(strcmp(fname,dir[i].file_name)==0){
+			if(dir[i].file_type==Directory){
+				copy_dir_entry(dir+i,&to_write);
+				return 0;
+			}else{
+				*errnoptr=ENOTDIR;
+				return -1;
+
+			}
+		}
+	}
+	errnoptr[0]=ENOTDIR;
+	return -1;
+}
+//finds dir entry at path. if none is found errno is populated as nessacary
+struct DirEntry find_path(void *fsptr,size_t fssize,int *errnoptr,const char *path){
 	//hardcode Root
 	if(strcmp(path,"/")==0){
 		struct DirEntry root;
@@ -549,7 +613,7 @@ struct DirEntry* find_path(void *fsptr,size_t fssize,int *errnoptr,const char *p
 					struct DirEntry t;
 					t.file_block=0;
 					free(t_path);
-					return &t;
+					return t;
 
 				}
 			}
@@ -559,7 +623,7 @@ struct DirEntry* find_path(void *fsptr,size_t fssize,int *errnoptr,const char *p
 			struct DirEntry t;
 			t.file_block=0;
 			free(t_path);
-			return &t;
+			return t;
 
 		}
 		char* temp = strtok(NULL,"/");
@@ -576,13 +640,13 @@ struct DirEntry* find_path(void *fsptr,size_t fssize,int *errnoptr,const char *p
 				free(dir);
 				free(t_path);
 
-				return &ret;
+				return ret;
 			}else{
 				*errnoptr=ENOTDIR;
 				struct DirEntry t;
 				t.file_block=0;
 				free(t_path);
-				return &t;
+				return t;
 
 			}
 		}
@@ -952,30 +1016,31 @@ int __myfs_mkdir_implem(void *fsptr, size_t fssize, int *errnoptr,
 int __myfs_rename_implem(void *fsptr, size_t fssize, int *errnoptr,
                          const char *from, const char *to) {
   /* STUB */
-	size_t last = strrchr(path,'/')-path;
+	size_t last = strrchr(from,'/')-from;
 	char* t_path = calloc(last+1,1);
-	memcpy(t_path,path,last);
+	memcpy(t_path,from,last);
 	t_path[last+1]=0;
-	struct DirEntry f= find_path(fsptr,fssize,errnoptr,path);
+	struct DirEntry f= find_path(fsptr,fssize,errnoptr,from);
 	
 	struct DirEntry parent= find_path(fsptr,fssize,errnoptr,t_path);
 	size_t dirs_size;
 	struct DirEntry* dirs = load_mem(fsptr,fssize,errnoptr,parent.file_block,&dirs_size);
 	struct DirEntry file;
+
 	for(size_t i=0;i<dirs_size/sizeof(struct DirEntry);i++){
 		if(strcmp(f.file_name,dirs[i].file_name)==0){
 
 			remove_data(fsptr,fssize,errnoptr,&parent.file_block,i*sizeof(struct DirEntry),sizeof(struct DirEntry));
-			file=dirs[i];
+			copy_dir_entry(&file,dirs+i);
 			break;
 
 
 		}
 	}
-	size_t last = strrchr(path,'/')-path;
-	char* to_path = calloc(last+1,1);
-	memcpy(to_path,path,last);
-	to_path[last+1]=0;
+	size_t to_last = strrchr(to,'/')-to;
+	char* to_path = calloc(to_last+1,1);
+	memcpy(to_path,to,to_last);
+	to_path[to_last+1]=0;
 	struct DirEntry new_parent= find_path(fsptr,fssize,errnoptr,to_path);
 	append_data(fsptr,fssize,errnoptr,new_parent.file_block,sizeof(struct DirEntry),&file);
 	return 0;
@@ -1004,7 +1069,7 @@ int __myfs_truncate_implem(void *fsptr, size_t fssize, int *errnoptr,
 	struct DirEntry f= find_path(fsptr,fssize,errnoptr,path);
 	size_t size=get_size(fsptr,fssize,errnoptr,f.file_block);
 	if(offset>size){
-		append_data(fsptr,fssize,errnoptr,parent.file_block,offset-size,calloc(offset-size,1));
+		append_data(fsptr,fssize,errnoptr,f.file_block,offset-size,calloc(offset-size,1));
 	}else{
 		remove_data(fsptr,fssize,errnoptr,&f.file_block,offset,size-offset);
 	}
@@ -1044,11 +1109,11 @@ int __myfs_open_implem(void *fsptr, size_t fssize, int *errnoptr,
 	*errnoptr=0;
 	struct DirEntry f= find_path(fsptr,fssize,errnoptr,path);
 	if(errnoptr!=0){
-		errnoptr=enoent;
+		*errnoptr=ENOENT;
 		return -1;
 	}
 	if(f.file_type!=File){
-		errnoptr=enoent;
+		*errnoptr=ENOENT;
 		return -1;
 	}
 	return 0;
@@ -1115,9 +1180,10 @@ int __myfs_write_implem(void *fsptr, size_t fssize, int *errnoptr,
 int __myfs_utimens_implem(void *fsptr, size_t fssize, int *errnoptr,
                           const char *path, const struct timespec ts[2]) {
   /* STUB */
-	struct DirEntry* f= find_path(fsptr,fssize,errnoptr,path);
-	f->atime=ts[0];
-	f->mtim=ts[1];
+	struct DirEntry f= find_path(fsptr,fssize,errnoptr,path);
+	f.atime=ts[0];
+	f.mtime=ts[1];
+	write_path(fsptr,fssize,errnoptr,path,f);
 
   return 0;
 }
