@@ -325,6 +325,37 @@ size_t alloc_block(void *fsptr,size_t fssize,int* errnoptr){
 	}
 	return 0;
 }
+void alloc_data(void *fsptr,size_t fssize,int* errnoptr,void* data,size_t data_size){
+	int first=1;
+	struct FAT_ENTRY* fat = NULL;
+	size_t num_blocks=data_size/get_fat_size(fsptr,fssize,errnoptr);
+	if(num_blocks%get_fat_size(fsptr,fssize,errnoptr)!=0){
+		num_blocks++;
+
+	}
+	for(size_t i=0;i<num_blocks;i++){
+		size_t block = alloc_block(fsptr,fssize,errnoptr);
+		size_t block_size=0;
+		void* copy_to = load_block(fsptr,fssize,errnoptr,block,&block_size);
+		size_t start_index = i*BLOCK_SIZE;
+		size_t end = start_index + BLOCK_SIZE-1;
+		size_t copy_len = BLOCK_SIZE;
+		if(end+start_index>data_size){
+			copy_len=data_size-start_index;
+
+		}
+		memcpy(copy_to,data+start_index,copy_len);
+		if(first){
+			first=0;
+		}else{
+			fat->next_block=block;
+			fat = get_fat(fsptr,fssize,errnoptr,block);
+		}
+
+	}
+
+}
+//frees block and following children
 int free_data(void* fsptr,size_t fssize,int* errnoptr,size_t block){
 	struct FAT_ENTRY* current_block;
 	while(1){
@@ -341,6 +372,67 @@ int free_data(void* fsptr,size_t fssize,int* errnoptr,size_t block){
 
 	}
 	return -1;
+
+}
+void* read_data(void* fsptr,size_t fssize,int* errnoptr,size_t block,size_t start,size_t read_len){
+	size_t current_block=block_number;
+	char* data=NULL;
+	size_t read_size=0;
+	int mem_size=0;
+	int break=0;
+	while(break==0){
+		struct FAT_ENTRY* fat =get_fat(fsptr,fssize,errnoptr,current_block);
+		size_t t_mem_size=0;
+		char* t_data = load_block(fsptr,fssize,errnoptr,current_block,&t_mem_size);
+		if(t_mem_size+read_size>=start_index){
+			size_t read_index=start-size_read;
+			size_t end_index = t_mem_size;
+			if(end_index-read_index>read_len){
+				end_index=start_index+read_len;
+				break=1;
+			}
+			data= realloc(data,mem_size+end_index-start_index);
+			memcpy(data,t_data+start_index,end_index-start_index);
+		}
+		if(fat->next_block!=0){
+			current_block=fat->next_block;
+		}else{
+			errnoptr=1;
+			return NULL;
+
+		}
+	}
+	return data;
+
+}
+int read_data(void* fsptr,size_t fssize,int* errnoptr,size_t block,size_t start,size_t read_len,void* to_write){
+	size_t current_block=block_number;
+	char* data=NULL;
+	size_t read_size=0;
+	int mem_size=0;
+	int break=0;
+	while(break==0){
+		struct FAT_ENTRY* fat =get_fat(fsptr,fssize,errnoptr,current_block);
+		size_t t_mem_size=0;
+		char* t_data = load_block(fsptr,fssize,errnoptr,current_block,&t_mem_size);
+		if(t_mem_size+read_size>=start_index){
+			size_t read_index=start-size_read;
+			size_t end_index = t_mem_size;
+			if(end_index-read_index>read_len){
+				end_index=start_index+read_len;
+				break=1;
+			}
+			memcpy(t_data+start_index,to_write,end_index-start_index);
+		}
+		if(fat->next_block!=0){
+			current_block=fat->next_block;
+		}else{
+			errnoptr=1;
+			return -1;
+
+		}
+	}
+	return 0;
 
 }
 //reallocates dat to proper size
@@ -411,13 +503,24 @@ void* load_mem(void *fsptr,size_t fssize,int *errnoptr,size_t block_number,size_
 		current_block=fat->next_block;
 	}
 	return data;
+}
+size_t get_size(void* fsptr,size_t fssize,int*errnoptr,size_t block_number){
+	size_t current_block=block_number;
+	size_t size=0;
+	while(1){
+		struct FAT_ENTRY* fat =get_fat(fsptr,fssize,errnoptr,current_block);
+		size+=fat.used_size;
+		if(fat->next_block==0){
+			break;
+		}
+		
+	}
+	return size;
 
-	
-	
 
 }
 //finds dir entry at path. if none is found errno is populated as nessacary
-struct DirEntry find_path(void *fsptr,size_t fssize,int *errnoptr,const char *path){
+struct DirEntry* find_path(void *fsptr,size_t fssize,int *errnoptr,const char *path){
 	//hardcode Root
 	if(strcmp(path,"/")==0){
 		struct DirEntry root;
@@ -446,7 +549,7 @@ struct DirEntry find_path(void *fsptr,size_t fssize,int *errnoptr,const char *pa
 					struct DirEntry t;
 					t.file_block=0;
 					free(t_path);
-					return t;
+					return &t;
 
 				}
 			}
@@ -456,7 +559,7 @@ struct DirEntry find_path(void *fsptr,size_t fssize,int *errnoptr,const char *pa
 			struct DirEntry t;
 			t.file_block=0;
 			free(t_path);
-			return t;
+			return &t;
 
 		}
 		char* temp = strtok(NULL,"/");
@@ -473,13 +576,13 @@ struct DirEntry find_path(void *fsptr,size_t fssize,int *errnoptr,const char *pa
 				free(dir);
 				free(t_path);
 
-				return ret;
+				return &ret;
 			}else{
 				*errnoptr=ENOTDIR;
 				struct DirEntry t;
 				t.file_block=0;
 				free(t_path);
-				return t;
+				return &t;
 
 			}
 		}
@@ -489,6 +592,22 @@ struct DirEntry find_path(void *fsptr,size_t fssize,int *errnoptr,const char *pa
 	t.file_block=0;
 	free(t_path);
 	return t;
+}
+//removes data
+void remove_data(void* fsptr,size_t fssize,int* errnoptr,size_t* block,size_t start_index,size_t size_remove){
+	size_t size_read = 0;
+
+	void* data = load_mem(fsptr,fssize,errnoptr,*block,&size_read);
+	//moving data
+	memmove(data+start_index,data+start_index+size_remove+1,size_read-(start_index+size_remove+1));
+	free_data(fsptr,fssize,errnoptr,*block);
+	alloc_data(fsptr,fssize,errnoptr,data,size_read-size_remove);
+	free(data);
+	return;
+
+	
+	
+
 }
 
 void print_info(void* fsptr,size_t fssize,int* errnoptr){
@@ -697,7 +816,27 @@ int __myfs_mknod_implem(void *fsptr, size_t fssize, int *errnoptr,
 */
 int __myfs_unlink_implem(void *fsptr, size_t fssize, int *errnoptr,
                         const char *path) {
-  /* STUB */
+	//a. finding last /
+	size_t last = strrchr(path,'/')-path;
+	char* t_path = calloc(last+1,1);
+	memcpy(t_path,path,last);
+	t_path[last+1]=0;
+	struct DirEntry f= find_path(fsptr,fssize,errnoptr,path);
+	
+	struct DirEntry parent= find_path(fsptr,fssize,errnoptr,t_path);
+	size_t dirs_size;
+	struct DirEntry* dirs = load_mem(fsptr,fssize,errnoptr,parent.file_block,&dirs_size);
+	for(size_t i=0;i<dirs_size/sizeof(struct DirEntry);i++){
+		if(strcmp(f.file_name,dirs[i].file_name)==0){
+			free_data(fsptr,fssize,errnoptr,dirs[i].file_block);
+			remove_data(fsptr,fssize,errnoptr,&parent.file_block,i*sizeof(struct DirEntry),sizeof(struct DirEntry));
+			return 0;
+
+
+		}
+	}
+
+
 	assert(1==0);
   return -1;
 }
@@ -719,8 +858,26 @@ int __myfs_unlink_implem(void *fsptr, size_t fssize, int *errnoptr,
 */
 int __myfs_rmdir_implem(void *fsptr, size_t fssize, int *errnoptr,
                         const char *path) {
-  /* STUB */
-	assert(1==0);
+	//a. finding last /
+	size_t last = strrchr(path,'/')-path;
+	char* t_path = calloc(last+1,1);
+	memcpy(t_path,path,last);
+	t_path[last+1]=0;
+	struct DirEntry f= find_path(fsptr,fssize,errnoptr,path);
+	
+	struct DirEntry parent= find_path(fsptr,fssize,errnoptr,t_path);
+	size_t dirs_size;
+	struct DirEntry* dirs = load_mem(fsptr,fssize,errnoptr,parent.file_block,&dirs_size);
+	for(size_t i=0;i<dirs_size/sizeof(struct DirEntry);i++){
+		if(strcmp(f.file_name,dirs[i].file_name)==0){
+			free_data(fsptr,fssize,errnoptr,dirs[i].file_block);
+			remove_data(fsptr,fssize,errnoptr,&parent.file_block,i*sizeof(struct DirEntry),sizeof(struct DirEntry));
+			return 0;
+
+
+		}
+	}
+
   return -1;
 }
 
@@ -795,8 +952,33 @@ int __myfs_mkdir_implem(void *fsptr, size_t fssize, int *errnoptr,
 int __myfs_rename_implem(void *fsptr, size_t fssize, int *errnoptr,
                          const char *from, const char *to) {
   /* STUB */
-	assert(1==0);
-  return -1;
+	size_t last = strrchr(path,'/')-path;
+	char* t_path = calloc(last+1,1);
+	memcpy(t_path,path,last);
+	t_path[last+1]=0;
+	struct DirEntry f= find_path(fsptr,fssize,errnoptr,path);
+	
+	struct DirEntry parent= find_path(fsptr,fssize,errnoptr,t_path);
+	size_t dirs_size;
+	struct DirEntry* dirs = load_mem(fsptr,fssize,errnoptr,parent.file_block,&dirs_size);
+	struct DirEntry file;
+	for(size_t i=0;i<dirs_size/sizeof(struct DirEntry);i++){
+		if(strcmp(f.file_name,dirs[i].file_name)==0){
+
+			remove_data(fsptr,fssize,errnoptr,&parent.file_block,i*sizeof(struct DirEntry),sizeof(struct DirEntry));
+			file=dirs[i];
+			break;
+
+
+		}
+	}
+	size_t last = strrchr(path,'/')-path;
+	char* to_path = calloc(last+1,1);
+	memcpy(to_path,path,last);
+	to_path[last+1]=0;
+	struct DirEntry new_parent= find_path(fsptr,fssize,errnoptr,to_path);
+	append_data(fsptr,fssize,errnoptr,new_parent.file_block,sizeof(struct DirEntry),&file);
+	return 0;
 }
 
 /* Implements an emulation of the truncate system call on the filesystem 
@@ -818,8 +1000,15 @@ int __myfs_rename_implem(void *fsptr, size_t fssize, int *errnoptr,
 int __myfs_truncate_implem(void *fsptr, size_t fssize, int *errnoptr,
                            const char *path, off_t offset) {
   /* STUB */
-	assert(1==0);
-  return -1;
+
+	struct DirEntry f= find_path(fsptr,fssize,errnoptr,path);
+	size_t size=get_size(fsptr,fssize,errnoptr,f.file_block);
+	if(offset>size){
+		append_data(fsptr,fssize,errnoptr,parent.file_block,offset-size,calloc(offset-size,1));
+	}else{
+		remove_data(fsptr,fssize,errnoptr,&f.file_block,offset,size-offset);
+	}
+	return 0;
 }
 
 /* Implements an emulation of the open system call on the filesystem 
@@ -851,8 +1040,18 @@ int __myfs_truncate_implem(void *fsptr, size_t fssize, int *errnoptr,
 int __myfs_open_implem(void *fsptr, size_t fssize, int *errnoptr,
                        const char *path) {
   /* STUB */
-	assert(1==0);
-  return -1;
+
+	*errnoptr=0;
+	struct DirEntry f= find_path(fsptr,fssize,errnoptr,path);
+	if(errnoptr!=0){
+		errnoptr=enoent;
+		return -1;
+	}
+	if(f.file_type!=File){
+		errnoptr=enoent;
+		return -1;
+	}
+	return 0;
 }
 
 /* Implements an emulation of the read system call on the filesystem 
@@ -873,8 +1072,9 @@ int __myfs_open_implem(void *fsptr, size_t fssize, int *errnoptr,
 int __myfs_read_implem(void *fsptr, size_t fssize, int *errnoptr,
                        const char *path, char *buf, size_t size, off_t offset) {
   /* STUB */
-	assert(1==0);
-  return -1;
+	struct DirEntry f= find_path(fsptr,fssize,errnoptr,path);
+	buf= read_data(fsptr,fssize,errnoptr,f.file_block,offset,size);
+	return 0;
 }
 
 /* Implements an emulation of the write system call on the filesystem 
@@ -894,9 +1094,9 @@ int __myfs_read_implem(void *fsptr, size_t fssize, int *errnoptr,
 */
 int __myfs_write_implem(void *fsptr, size_t fssize, int *errnoptr,
                         const char *path, const char *buf, size_t size, off_t offset) {
-  /* STUB */
-	assert(1==0);
-  return -1;
+	struct DirEntry f= find_path(fsptr,fssize,errnoptr,path);
+	write_data(fsptr,fssize,errnoptr,f.file_block,offset,size,buf);
+	return 0;
 }
 
 /* Implements an emulation of the utimensat system call on the filesystem 
@@ -915,8 +1115,11 @@ int __myfs_write_implem(void *fsptr, size_t fssize, int *errnoptr,
 int __myfs_utimens_implem(void *fsptr, size_t fssize, int *errnoptr,
                           const char *path, const struct timespec ts[2]) {
   /* STUB */
-	assert(1==0);
-  return -1;
+	struct DirEntry* f= find_path(fsptr,fssize,errnoptr,path);
+	f->atime=ts[0];
+	f->mtim=ts[1];
+
+  return 0;
 }
 
 /* Implements an emulation of the statfs system call on the filesystem 
