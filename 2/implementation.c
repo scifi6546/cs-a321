@@ -583,22 +583,58 @@ int write_path(void *fsptr,size_t fssize,int *errnoptr,const char *path,struct D
 	errnoptr[0]=ENOTDIR;
 	return -1;
 }
+char* get_parent_path(const char* str){
+	size_t last = 0;
+	for(size_t i=0;str[i]!=0;i++){
+		if(str[i]=='/'){
+			last=i;
+		}
+	}
+	char* data = calloc(last+1,1);
+	printf("last index: %li\n",last);
+	if(last!=0){
+		memcpy(data,str+1,last-1);
+		data[last]=0;
+	}else{
+		data[0]=0;
+
+	}
+	return data;
+}
+char* get_child_path(const char* str){
+	size_t last = 0;
+	for(size_t i=0;str[i]!=0;i++){
+		if(str[i]=='/'){
+			last=i;
+		}
+	}
+	size_t data_size = strlen(str)-last;
+	char* data = calloc(data_size-last,1);
+	printf("last index: %li\n",last);
+	memcpy(data,str+last+1,data_size-1);
+	data[data_size-1]=0;
+	return data;
+
+}
 //finds dir entry at path. if none is found errno is populated as nessacary
 struct DirEntry find_path(void *fsptr,size_t fssize,int *errnoptr,const char *path){
+	*errnoptr =0;
 	//hardcode Root
-	if(strcmp(path,"/")==0){
+	if(strcmp(path,"/")==0 || strcmp(path,"")==0){
 		struct DirEntry root;
 		root.file_type=Directory;
 		root.file_block=0;
+		memset(root.file_name,0,MAX_NAME_SIZE);
 		return root;
 	}
 	size_t current_block = 0;
 	assert(path[0]=='/');
 	struct DirEntry* dir = NULL;
 	size_t dir_size=0;
-	char *t_path = calloc(strlen(path),1);
-	strcpy(t_path,path);
+	char *t_path = get_parent_path(path);
+	printf("parent path:%s\n",t_path);
 	char* fname = strtok(t_path,"/");
+	printf("fname: %s\n",fname);
 	while(fname!=NULL){
 		free(dir);
 		dir = load_mem(fsptr,fssize,errnoptr,current_block,&dir_size);
@@ -642,16 +678,15 @@ struct DirEntry find_path(void *fsptr,size_t fssize,int *errnoptr,const char *pa
 
 				return ret;
 			}else{
-				*errnoptr=ENOTDIR;
-				struct DirEntry t;
-				t.file_block=0;
+				struct DirEntry ret = dir[i];
+				free(dir);
 				free(t_path);
-				return t;
+				return ret;
 
 			}
 		}
 	}
-	errnoptr[0]=ENOTDIR;
+	errnoptr[0]=ENOENT;
 	struct DirEntry t;
 	t.file_block=0;
 	free(t_path);
@@ -712,6 +747,7 @@ void print_info(void* fsptr,size_t fssize,int* errnoptr){
 int __myfs_getattr_implem(void *fsptr, size_t fssize, int *errnoptr,
                           uid_t uid, gid_t gid,
                           const char *path, struct stat *stbuf) {
+	printf("get attr path: %s\n",path);
 	*errnoptr=0;
 	try_build(fsptr,fssize,errnoptr);
 	if(*errnoptr!=0){
@@ -726,6 +762,7 @@ int __myfs_getattr_implem(void *fsptr, size_t fssize, int *errnoptr,
 		size_t len = 0;
 		free(load_mem(fsptr,fssize,errnoptr,f.file_block,&len));
 		stbuf->st_nlink=len/sizeof(struct DirEntry);
+		stbuf->st_nlink+=2;
 		stbuf->st_mode=S_IFDIR | 0755;
 	}
 	if(f.file_type==File){
@@ -781,6 +818,7 @@ int __myfs_getattr_implem(void *fsptr, size_t fssize, int *errnoptr,
 int __myfs_readdir_implem(void *fsptr, size_t fssize, int *errnoptr,
                           const char *path, char ***namesptr) {
   /* STUB */
+	printf("read dir path: %s\n",path);
 	*errnoptr=0;
 	struct DirEntry d = find_path(fsptr,fssize,errnoptr,path);
 	if(*errnoptr!=0){
@@ -826,6 +864,7 @@ int __myfs_readdir_implem(void *fsptr, size_t fssize, int *errnoptr,
 */
 int __myfs_mknod_implem(void *fsptr, size_t fssize, int *errnoptr,
                         const char *path) {
+	printf("mknod path: %s\n",path);
 	*errnoptr=0;
 	try_build(fsptr,fssize,errnoptr);
 	if(errnoptr!=0){
@@ -833,16 +872,13 @@ int __myfs_mknod_implem(void *fsptr, size_t fssize, int *errnoptr,
 	}
 	//1. strip off last part of path
 	//a. finding last /
-	size_t last = strrchr(path,'/')-path;
-	char* t_path = calloc(last+1,1);
-	memcpy(t_path,path,last);
-	t_path[last+1]=0;
+	char* t_path = get_parent_path(path);
 	struct DirEntry f = find_path(fsptr,fssize,errnoptr,t_path);
 	if(errnoptr!=0){
 		return -1;
 	}
 	//Next build new dir entry
-	size_t next_dir_len = strlen(path)-1-last;
+	size_t next_dir_len = strlen(path);
 	if(next_dir_len>MAX_NAME_SIZE){
 		errnoptr[0]=ENAMETOOLONG;
 		return -1;
@@ -850,7 +886,9 @@ int __myfs_mknod_implem(void *fsptr, size_t fssize, int *errnoptr,
 	}
 	
 	struct DirEntry new_f;
-	memcpy(new_f.file_name,path+last+1,strlen(path)-last);
+	char* child = get_child_path(path);
+	memcpy(new_f.file_name,child,strlen(child));
+	free(child);
 	new_f.file_type=File;
 	new_f.file_block=alloc_block(fsptr,fssize,errnoptr);
 	struct FAT_ENTRY* fat = get_fat(fsptr,fssize,errnoptr,new_f.file_block);
@@ -881,6 +919,7 @@ int __myfs_mknod_implem(void *fsptr, size_t fssize, int *errnoptr,
 int __myfs_unlink_implem(void *fsptr, size_t fssize, int *errnoptr,
                         const char *path) {
 	//a. finding last /
+	printf("unlink path: %s\n",path);
 	size_t last = strrchr(path,'/')-path;
 	char* t_path = calloc(last+1,1);
 	memcpy(t_path,path,last);
@@ -901,7 +940,6 @@ int __myfs_unlink_implem(void *fsptr, size_t fssize, int *errnoptr,
 	}
 
 
-	assert(1==0);
   return -1;
 }
 
@@ -923,6 +961,7 @@ int __myfs_unlink_implem(void *fsptr, size_t fssize, int *errnoptr,
 int __myfs_rmdir_implem(void *fsptr, size_t fssize, int *errnoptr,
                         const char *path) {
 	//a. finding last /
+	printf("rmdir path: %s\n",path);
 	size_t last = strrchr(path,'/')-path;
 	char* t_path = calloc(last+1,1);
 	memcpy(t_path,path,last);
@@ -960,34 +999,33 @@ int __myfs_rmdir_implem(void *fsptr, size_t fssize, int *errnoptr,
 int __myfs_mkdir_implem(void *fsptr, size_t fssize, int *errnoptr,
                         const char *path) {
   /* STUB */
+	printf("mkdir path: %s\n",path);
 	*errnoptr=0;
 	try_build(fsptr,fssize,errnoptr);
-	if(errnoptr!=0){
+	if(*errnoptr!=0){
 		return -1;
 	}
 	//1. strip off last part of path
 	//a. finding last /
 	size_t last = strrchr(path,'/')-path;
-	char* t_path = calloc(last+1,1);
-	memcpy(t_path,path,last);
-	t_path[last+1]=0;
+	char* t_path = get_parent_path(path);
 	struct DirEntry f = find_path(fsptr,fssize,errnoptr,t_path);
-	if(errnoptr!=0){
+	if(*errnoptr!=0){
 		return -1;
 	}
 	//Next build new dir entry
 	size_t next_dir_len = strlen(path)-1-last;
 	if(next_dir_len>MAX_NAME_SIZE){
-		errnoptr[0]=ENAMETOOLONG;
+		*errnoptr=ENAMETOOLONG;
 		return -1;
 
 	}
 	
 	struct DirEntry new_f;
-	memcpy(new_f.file_name,path+last+1,strlen(path)-last);
+	char* new_name = get_child_path(path);
+	memcpy(new_f.file_name,new_name,strlen(new_name)+1);
 	new_f.file_block=alloc_block(fsptr,fssize,errnoptr);
-	struct FAT_ENTRY* fat = get_fat(fsptr,fssize,errnoptr,new_f.file_block);
-	fat->used_size=0;
+	free(new_name);
 
 
 	
@@ -1016,6 +1054,7 @@ int __myfs_mkdir_implem(void *fsptr, size_t fssize, int *errnoptr,
 int __myfs_rename_implem(void *fsptr, size_t fssize, int *errnoptr,
                          const char *from, const char *to) {
   /* STUB */
+	printf("rename from path: %s to path: %s\n",from,to);
 	size_t last = strrchr(from,'/')-from;
 	char* t_path = calloc(last+1,1);
 	memcpy(t_path,from,last);
@@ -1066,6 +1105,7 @@ int __myfs_truncate_implem(void *fsptr, size_t fssize, int *errnoptr,
                            const char *path, off_t offset) {
   /* STUB */
 
+	printf("***truncate*** path: %s\n",path);
 	struct DirEntry f= find_path(fsptr,fssize,errnoptr,path);
 	size_t size=get_size(fsptr,fssize,errnoptr,f.file_block);
 	if(offset>size){
@@ -1104,16 +1144,18 @@ int __myfs_truncate_implem(void *fsptr, size_t fssize, int *errnoptr,
 */
 int __myfs_open_implem(void *fsptr, size_t fssize, int *errnoptr,
                        const char *path) {
-  /* STUB */
+	printf("***open*** path: %s\n",path);
 
 	*errnoptr=0;
 	struct DirEntry f= find_path(fsptr,fssize,errnoptr,path);
 	if(errnoptr!=0){
 		*errnoptr=ENOENT;
+		printf("open failed\n");
 		return -1;
 	}
 	if(f.file_type!=File){
 		*errnoptr=ENOENT;
+		printf("open failed\n");
 		return -1;
 	}
 	return 0;
@@ -1137,6 +1179,7 @@ int __myfs_open_implem(void *fsptr, size_t fssize, int *errnoptr,
 int __myfs_read_implem(void *fsptr, size_t fssize, int *errnoptr,
                        const char *path, char *buf, size_t size, off_t offset) {
   /* STUB */
+	printf("read path: %s\n",path);
 	struct DirEntry f= find_path(fsptr,fssize,errnoptr,path);
 	buf= read_data(fsptr,fssize,errnoptr,f.file_block,offset,size);
 	return 0;
@@ -1159,6 +1202,7 @@ int __myfs_read_implem(void *fsptr, size_t fssize, int *errnoptr,
 */
 int __myfs_write_implem(void *fsptr, size_t fssize, int *errnoptr,
                         const char *path, const char *buf, size_t size, off_t offset) {
+	printf("write path: %s\n",path);
 	struct DirEntry f= find_path(fsptr,fssize,errnoptr,path);
 	write_data(fsptr,fssize,errnoptr,f.file_block,offset,size,buf);
 	return 0;
@@ -1180,6 +1224,7 @@ int __myfs_write_implem(void *fsptr, size_t fssize, int *errnoptr,
 int __myfs_utimens_implem(void *fsptr, size_t fssize, int *errnoptr,
                           const char *path, const struct timespec ts[2]) {
   /* STUB */
+	printf("utimens path: %s\n",path);
 	struct DirEntry f= find_path(fsptr,fssize,errnoptr,path);
 	f.atime=ts[0];
 	f.mtime=ts[1];
@@ -1214,6 +1259,7 @@ int __myfs_utimens_implem(void *fsptr, size_t fssize, int *errnoptr,
 int __myfs_statfs_implem(void *fsptr, size_t fssize, int *errnoptr,
                          struct statvfs* stbuf) {
 	errnoptr=0;
+	printf("running statfs\n");
 	try_build(fsptr,fssize,errnoptr);
 	stbuf->f_bsize=BLOCK_SIZE;
 	stbuf->f_blocks=get_fat_size(fsptr,fssize,errnoptr);
