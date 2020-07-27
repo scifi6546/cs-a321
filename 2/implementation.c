@@ -230,6 +230,13 @@
          filesystem and try to watch it out of the filesystem.
 
 */
+size_t min(size_t a,size_t b){
+	if(a>b){
+		return b;
+	}
+	return a;
+
+}
 void print_info(void* fsptr,size_t fssize,int* errnoptr);
 /* Helper types and functions */
 struct FAT_ENTRY{
@@ -455,8 +462,12 @@ int append_data(void *fsptr,size_t fssize,int* errnoptr,size_t block,size_t appe
 			size_t index_in_block=0;
 			void* memory = load_block(fsptr,fssize,errnoptr,block,&index_in_block);
 			//first copy to end of current block
-			memcpy(memory+index_in_block,new_data,BLOCK_SIZE-index_in_block);
-
+			size_t copy_size = min(BLOCK_SIZE-index_in_block,append_size+index_in_block);
+			memcpy(memory+index_in_block,new_data,copy_size);
+			current_block->used_size=copy_size+index_in_block;
+			if(append_size+index_in_block<BLOCK_SIZE-index_in_block){
+				return 0;
+			}
 			while(1){
 				current_block->next_block=alloc_block(fsptr,fssize,errnoptr);
 				if(append_size>BLOCK_SIZE){
@@ -473,6 +484,7 @@ int append_data(void *fsptr,size_t fssize,int* errnoptr,size_t block,size_t appe
 					void* t_memory = load_block(fsptr,fssize,errnoptr,block,&index_in_block);
 					memcpy(t_memory,new_data,BLOCK_SIZE);
 					current_block=get_fat(fsptr,fssize,errnoptr,current_block->next_block);
+					current_block->next_block=0;
 					current_block->used_size=BLOCK_SIZE;
 					return 0;
 				}
@@ -503,6 +515,7 @@ void* load_mem(void *fsptr,size_t fssize,int *errnoptr,size_t block_number,size_
 		char* t_data = load_block(fsptr,fssize,errnoptr,current_block,&t_mem_size);
 		data = realloc(data,t_mem_size+*mem_size);
 		memcpy(data+*mem_size,t_data,t_mem_size);
+		*mem_size+=t_mem_size;
 		if(fat->next_block==0){
 			break;
 		}
@@ -634,10 +647,17 @@ struct DirEntry find_path(void *fsptr,size_t fssize,int *errnoptr,const char *pa
 	char *t_path = get_parent_path(path);
 	printf("parent path:%s\n",t_path);
 	char* fname = strtok(t_path,"/");
+	char* child_name = get_child_path(path);
 	printf("fname: %s\n",fname);
+	if(fname==NULL){
+		//loading root block
+		dir = load_mem(fsptr,fssize,errnoptr,0,&dir_size);
+		dir_size/=sizeof(struct DirEntry);
+	}
 	while(fname!=NULL){
 		free(dir);
 		dir = load_mem(fsptr,fssize,errnoptr,current_block,&dir_size);
+		dir_size/=sizeof(struct DirEntry);
 		int found=0;
 		for(ssize_t i=0;i<dir_size;i++){
 			if(strcmp(fname,dir[i].file_name)==0){
@@ -649,6 +669,8 @@ struct DirEntry find_path(void *fsptr,size_t fssize,int *errnoptr,const char *pa
 					struct DirEntry t;
 					t.file_block=0;
 					free(t_path);
+					free(child_name);
+					
 					return t;
 
 				}
@@ -658,6 +680,7 @@ struct DirEntry find_path(void *fsptr,size_t fssize,int *errnoptr,const char *pa
 			*errnoptr=ENOTDIR;
 			struct DirEntry t;
 			t.file_block=0;
+			free(fname);
 			free(t_path);
 			return t;
 
@@ -670,17 +693,19 @@ struct DirEntry find_path(void *fsptr,size_t fssize,int *errnoptr,const char *pa
 		}
 	}
 	for(ssize_t i=0;i<dir_size;i++){
-		if(strcmp(fname,dir[i].file_name)==0){
+		if(strcmp(child_name,dir[i].file_name)==0){
 			if(dir[i].file_type==Directory){
 				struct DirEntry ret = dir[i];
 				free(dir);
 				free(t_path);
+				free(child_name);
 
 				return ret;
 			}else{
 				struct DirEntry ret = dir[i];
 				free(dir);
 				free(t_path);
+				free(child_name);
 				return ret;
 
 			}
@@ -690,6 +715,7 @@ struct DirEntry find_path(void *fsptr,size_t fssize,int *errnoptr,const char *pa
 	struct DirEntry t;
 	t.file_block=0;
 	free(t_path);
+	free(child_name);
 	return t;
 }
 //removes data
@@ -1025,6 +1051,7 @@ int __myfs_mkdir_implem(void *fsptr, size_t fssize, int *errnoptr,
 	char* new_name = get_child_path(path);
 	memcpy(new_f.file_name,new_name,strlen(new_name)+1);
 	new_f.file_block=alloc_block(fsptr,fssize,errnoptr);
+	new_f.file_type=Directory;
 	free(new_name);
 
 
