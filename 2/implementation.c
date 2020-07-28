@@ -237,6 +237,13 @@ size_t min(size_t a,size_t b){
 	return a;
 
 }
+size_t max(size_t a,size_t b){
+	if(a<b){
+		return b;
+	}
+	return a;
+
+}
 void print_info(void* fsptr,size_t fssize,int* errnoptr);
 /* Helper types and functions */
 struct FAT_ENTRY{
@@ -390,11 +397,9 @@ int free_data(void* fsptr,size_t fssize,int* errnoptr,size_t block){
 	return -1;
 
 }
-void* read_data(void* fsptr,size_t fssize,int* errnoptr,size_t block,size_t start,size_t read_len){
+size_t read_data(void* fsptr,size_t fssize,int* errnoptr,size_t block,size_t start,size_t read_len,void* buff){
 	size_t current_block=block;
-	char* data=NULL;
 	size_t read_size=0;
-	int mem_size=0;
 	int will_break=0;
 	while(will_break==0){
 		struct FAT_ENTRY* fat =get_fat(fsptr,fssize,errnoptr,current_block);
@@ -407,46 +412,61 @@ void* read_data(void* fsptr,size_t fssize,int* errnoptr,size_t block,size_t star
 				end_index=start_index+read_len;
 				will_break=1;
 			}
-			data= realloc(data,mem_size+end_index-start_index);
-			memcpy(data,t_data+start_index,end_index-start_index);
+			read_size+=end_index-start_index;
+			memcpy(buff,t_data+start_index,end_index-start_index);
+			if(end_index-read_size>=read_len){
+				return read_size;
+
+
+			}
 		}
 		if(fat->next_block!=0){
 			current_block=fat->next_block;
 		}else{
-			*errnoptr=1;
-			return NULL;
+			return read_size;
 
 		}
 	}
-	return data;
+	return -1;
 
 }
-int write_data(void* fsptr,size_t fssize,int* errnoptr,size_t block_number,size_t start,size_t read_len,const void* to_write){
+int write_data(void* fsptr,size_t fssize,int* errnoptr,size_t block_number,size_t start,size_t write_len,const void* to_write){
 	size_t current_block=block_number;
 	size_t read_size=0;
 	int will_break=0;
+	size_t bytes_written=0;
 	while(will_break==0){
-		struct FAT_ENTRY* fat =get_fat(fsptr,fssize,errnoptr,current_block);
-		size_t t_mem_size=0;
-		char* t_data = load_block(fsptr,fssize,errnoptr,current_block,&t_mem_size);
-		if(t_mem_size+read_size>=start){
-			size_t start_index=start-read_size;
-			size_t end_index = t_mem_size;
-			if(end_index-start_index>read_len){
-				end_index=start_index+read_len;
-				will_break=1;
-			}
-			memcpy(t_data+start_index,to_write,end_index-start_index);
-		}
-		if(fat->next_block!=0){
-			current_block=fat->next_block;
-		}else{
-			*errnoptr=1;
-			return -1;
+		size_t t_mem_size;
+		char* data = load_block(fsptr,fssize,errnoptr,current_block,&t_mem_size);
+		//checking if write is in block
+		if(read_size+t_mem_size>=start){
+			size_t write_start_in_block=start+bytes_written-read_size;
+			size_t write_end_index = min(BLOCK_SIZE,write_start_in_block+write_len);
+			size_t t_to_write = write_end_index-write_start_in_block;
+			memcpy(data,to_write+bytes_written,t_to_write);
+			struct FAT_ENTRY* fat = get_fat(fsptr,fssize,errnoptr,current_block);
+			fat->used_size=max(write_end_index,fat->used_size);
+			bytes_written+=t_to_write;
+			//if done writing
+			if(write_start_in_block+write_len<BLOCK_SIZE){
+				return 0;
 
+			}
 		}
+		struct FAT_ENTRY* fat = get_fat(fsptr,fssize,errnoptr,current_block);
+		if(fat->next_block==0){
+			size_t t_next_block = alloc_block(fsptr,fssize,errnoptr);
+			if(*errnoptr!=0){
+				return -1;
+			}
+			fat->next_block=t_next_block;
+		}
+		current_block = fat->next_block;
+
+
 	}
-	return 0;
+	//failed somehow should never get here
+	return -1;
 
 }
 //reallocates dat to proper size
@@ -641,7 +661,6 @@ struct DirEntry find_path(void *fsptr,size_t fssize,int *errnoptr,const char *pa
 		return root;
 	}
 	size_t current_block = 0;
-	assert(path[0]=='/');
 	struct DirEntry* dir = NULL;
 	size_t dir_size=0;
 	char *t_path = get_parent_path(path);
@@ -724,7 +743,7 @@ void remove_data(void* fsptr,size_t fssize,int* errnoptr,size_t* block,size_t st
 
 	void* data = load_mem(fsptr,fssize,errnoptr,*block,&size_read);
 	//moving data
-	memmove(data+start_index,data+start_index+size_remove+1,size_read-(start_index+size_remove+1));
+	memmove(data+start_index,data+start_index+size_remove,size_read-(start_index+size_remove));
 	free_data(fsptr,fssize,errnoptr,*block);
 	alloc_data(fsptr,fssize,errnoptr,data,size_read-size_remove);
 	free(data);
@@ -843,8 +862,7 @@ int __myfs_getattr_implem(void *fsptr, size_t fssize, int *errnoptr,
 */
 int __myfs_readdir_implem(void *fsptr, size_t fssize, int *errnoptr,
                           const char *path, char ***namesptr) {
-  /* STUB */
-	printf("read dir path: %s\n",path);
+	printf("***read dir*** path: %s\n",path);
 	*errnoptr=0;
 	struct DirEntry d = find_path(fsptr,fssize,errnoptr,path);
 	if(*errnoptr!=0){
@@ -861,14 +879,17 @@ int __myfs_readdir_implem(void *fsptr, size_t fssize, int *errnoptr,
 	if(*errnoptr!=0){
 		return -1;
 	}
+	namesptr[0]=calloc(memory_size/sizeof(struct DirEntry)+2,sizeof(char*));
 
-	namesptr=calloc(memory_size/sizeof(struct DirEntry),sizeof(char*));
+
 	for(size_t i=0;i<memory_size/sizeof(struct DirEntry);i++){
-		namesptr[i]=calloc(MAX_NAME_SIZE,sizeof(char));
-		memcpy(namesptr[i],dirs[i].file_name,MAX_NAME_SIZE);
+		namesptr[0][i]=calloc(strlen(dirs[i].file_name)+1,sizeof(char));
+		strcpy(namesptr[0][i],dirs[i].file_name);
+		printf("names[%li]: %s\n",i,namesptr[0][i]);
 
 	}
-	return 0;
+	int out = memory_size/sizeof(struct DirEntry);
+	return out;
 }
 
 /* Implements an emulation of the mknod system call for regular files
@@ -890,44 +911,40 @@ int __myfs_readdir_implem(void *fsptr, size_t fssize, int *errnoptr,
 */
 int __myfs_mknod_implem(void *fsptr, size_t fssize, int *errnoptr,
                         const char *path) {
-	printf("mknod path: %s\n",path);
+	printf("mkdir path: %s\n",path);
 	*errnoptr=0;
 	try_build(fsptr,fssize,errnoptr);
-	if(errnoptr!=0){
+	if(*errnoptr!=0){
 		return -1;
 	}
 	//1. strip off last part of path
 	//a. finding last /
+	size_t last = strrchr(path,'/')-path;
 	char* t_path = get_parent_path(path);
 	struct DirEntry f = find_path(fsptr,fssize,errnoptr,t_path);
-	if(errnoptr!=0){
+	if(*errnoptr!=0){
 		return -1;
 	}
 	//Next build new dir entry
-	size_t next_dir_len = strlen(path);
+	size_t next_dir_len = strlen(path)-1-last;
 	if(next_dir_len>MAX_NAME_SIZE){
-		errnoptr[0]=ENAMETOOLONG;
+		*errnoptr=ENAMETOOLONG;
 		return -1;
 
 	}
 	
 	struct DirEntry new_f;
-	char* child = get_child_path(path);
-	memcpy(new_f.file_name,child,strlen(child));
-	free(child);
-	new_f.file_type=File;
+	char* new_name = get_child_path(path);
+	memcpy(new_f.file_name,new_name,strlen(new_name)+1);
 	new_f.file_block=alloc_block(fsptr,fssize,errnoptr);
-	struct FAT_ENTRY* fat = get_fat(fsptr,fssize,errnoptr,new_f.file_block);
-	fat->used_size=0;
+	new_f.file_type=File;
+	free(new_name);
 
 
 	
 	//Finally append
 	append_data(fsptr,fssize,errnoptr,f.file_block,sizeof(struct DirEntry),&new_f);
 	return 0;
-  /* STUB */
-	assert(1==0);
-  return -1;
 }
 
 /* Implements an emulation of the unlink system call for regular files
@@ -946,10 +963,7 @@ int __myfs_unlink_implem(void *fsptr, size_t fssize, int *errnoptr,
                         const char *path) {
 	//a. finding last /
 	printf("unlink path: %s\n",path);
-	size_t last = strrchr(path,'/')-path;
-	char* t_path = calloc(last+1,1);
-	memcpy(t_path,path,last);
-	t_path[last+1]=0;
+	char* t_path = get_parent_path(path);
 	struct DirEntry f= find_path(fsptr,fssize,errnoptr,path);
 	
 	struct DirEntry parent= find_path(fsptr,fssize,errnoptr,t_path);
@@ -957,16 +971,22 @@ int __myfs_unlink_implem(void *fsptr, size_t fssize, int *errnoptr,
 	struct DirEntry* dirs = load_mem(fsptr,fssize,errnoptr,parent.file_block,&dirs_size);
 	for(size_t i=0;i<dirs_size/sizeof(struct DirEntry);i++){
 		if(strcmp(f.file_name,dirs[i].file_name)==0){
+			if(dirs[i].file_type!=File){
+				*errnoptr=EISDIR;
+				return -1;
+			}
 			free_data(fsptr,fssize,errnoptr,dirs[i].file_block);
 			remove_data(fsptr,fssize,errnoptr,&parent.file_block,i*sizeof(struct DirEntry),sizeof(struct DirEntry));
+			free(t_path);
 			return 0;
 
 
 		}
 	}
 
-
-  return -1;
+	free(t_path);
+	*errnoptr=ENOENT;
+  	return -1;
 }
 
 /* Implements an emulation of the rmdir system call on the filesystem 
@@ -986,12 +1006,7 @@ int __myfs_unlink_implem(void *fsptr, size_t fssize, int *errnoptr,
 */
 int __myfs_rmdir_implem(void *fsptr, size_t fssize, int *errnoptr,
                         const char *path) {
-	//a. finding last /
-	printf("rmdir path: %s\n",path);
-	size_t last = strrchr(path,'/')-path;
-	char* t_path = calloc(last+1,1);
-	memcpy(t_path,path,last);
-	t_path[last+1]=0;
+	char* t_path = get_parent_path(path);
 	struct DirEntry f= find_path(fsptr,fssize,errnoptr,path);
 	
 	struct DirEntry parent= find_path(fsptr,fssize,errnoptr,t_path);
@@ -999,15 +1014,22 @@ int __myfs_rmdir_implem(void *fsptr, size_t fssize, int *errnoptr,
 	struct DirEntry* dirs = load_mem(fsptr,fssize,errnoptr,parent.file_block,&dirs_size);
 	for(size_t i=0;i<dirs_size/sizeof(struct DirEntry);i++){
 		if(strcmp(f.file_name,dirs[i].file_name)==0){
+			if(dirs[i].file_type!=Directory){
+				*errnoptr=ENOTDIR;
+				return -1;
+			}
 			free_data(fsptr,fssize,errnoptr,dirs[i].file_block);
 			remove_data(fsptr,fssize,errnoptr,&parent.file_block,i*sizeof(struct DirEntry),sizeof(struct DirEntry));
+			free(t_path);
 			return 0;
 
 
 		}
 	}
 
-  return -1;
+	free(t_path);
+	*errnoptr=ENOENT;
+  	return -1;
 }
 
 /* Implements an emulation of the mkdir system call on the filesystem 
@@ -1130,7 +1152,6 @@ int __myfs_rename_implem(void *fsptr, size_t fssize, int *errnoptr,
 */
 int __myfs_truncate_implem(void *fsptr, size_t fssize, int *errnoptr,
                            const char *path, off_t offset) {
-  /* STUB */
 
 	printf("***truncate*** path: %s\n",path);
 	struct DirEntry f= find_path(fsptr,fssize,errnoptr,path);
@@ -1175,13 +1196,13 @@ int __myfs_open_implem(void *fsptr, size_t fssize, int *errnoptr,
 
 	*errnoptr=0;
 	struct DirEntry f= find_path(fsptr,fssize,errnoptr,path);
-	if(errnoptr!=0){
+	if(*errnoptr!=0){
 		*errnoptr=ENOENT;
 		printf("open failed\n");
 		return -1;
 	}
 	if(f.file_type!=File){
-		*errnoptr=ENOENT;
+		*errnoptr=EISDIR;
 		printf("open failed\n");
 		return -1;
 	}
@@ -1205,11 +1226,17 @@ int __myfs_open_implem(void *fsptr, size_t fssize, int *errnoptr,
 */
 int __myfs_read_implem(void *fsptr, size_t fssize, int *errnoptr,
                        const char *path, char *buf, size_t size, off_t offset) {
-  /* STUB */
-	printf("read path: %s\n",path);
+	printf("***read*** path: %s\n",path);
+	*errnoptr=0;
 	struct DirEntry f= find_path(fsptr,fssize,errnoptr,path);
-	buf= read_data(fsptr,fssize,errnoptr,f.file_block,offset,size);
-	return 0;
+	if(*errnoptr!=0){
+		return -1;
+	}
+	size= read_data(fsptr,fssize,errnoptr,f.file_block,offset,size,buf);
+	if(*errnoptr!=0){
+		return -1;
+	}
+	return size;
 }
 
 /* Implements an emulation of the write system call on the filesystem 
@@ -1229,10 +1256,17 @@ int __myfs_read_implem(void *fsptr, size_t fssize, int *errnoptr,
 */
 int __myfs_write_implem(void *fsptr, size_t fssize, int *errnoptr,
                         const char *path, const char *buf, size_t size, off_t offset) {
-	printf("write path: %s\n",path);
+	printf("***write*** path: %s\n",path);
 	struct DirEntry f= find_path(fsptr,fssize,errnoptr,path);
+	if(*errnoptr!=0){
+		return -1;
+	}
 	write_data(fsptr,fssize,errnoptr,f.file_block,offset,size,buf);
-	return 0;
+	if(*errnoptr!=0){
+		printf("write failed\n");
+		return -1;
+	}
+	return size;
 }
 
 /* Implements an emulation of the utimensat system call on the filesystem 
