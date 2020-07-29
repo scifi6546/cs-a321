@@ -286,7 +286,6 @@ void copy_dir_entry(struct DirEntry* dest,struct DirEntry *src){
 void try_build(void *fsptr, size_t fssize,int *errnoptr){
 	unsigned long* ul_fsptr = fsptr;
 	if(ul_fsptr[0]==0x00000005c1f16546){
-		print_info(fsptr,fssize,errnoptr);
 		//already setup do nothing
 		return;
 	}
@@ -300,7 +299,6 @@ void try_build(void *fsptr, size_t fssize,int *errnoptr){
 	}
 	fat_fsptr[0].used_size=0;
 	fat_fsptr[0].is_used=1;
-	print_info(fsptr,fssize,errnoptr);
 
 
 }
@@ -346,6 +344,7 @@ size_t alloc_block(void *fsptr,size_t fssize,int* errnoptr){
 		}
 
 	}
+	*errnoptr=1;
 	return 0;
 }
 void alloc_data(void *fsptr,size_t fssize,int* errnoptr,void* data,size_t data_size){
@@ -403,8 +402,16 @@ size_t read_data(void* fsptr,size_t fssize,int* errnoptr,size_t block,size_t sta
 	int will_break=0;
 	while(will_break==0){
 		struct FAT_ENTRY* fat =get_fat(fsptr,fssize,errnoptr,current_block);
+		if(*errnoptr!=0){
+			return -1;
+
+		}
 		size_t t_mem_size=0;
 		char* t_data = load_block(fsptr,fssize,errnoptr,current_block,&t_mem_size);
+		if(*errnoptr!=0){
+			return -1;
+
+		}
 		if(t_mem_size+read_size>=start){
 			size_t start_index=start-read_size;
 			size_t end_index = t_mem_size;
@@ -412,13 +419,13 @@ size_t read_data(void* fsptr,size_t fssize,int* errnoptr,size_t block,size_t sta
 				end_index=start_index+read_len;
 				will_break=1;
 			}
-			read_size+=end_index-start_index;
 			memcpy(buff,t_data+start_index,end_index-start_index);
 			if(end_index-read_size>=read_len){
 				return read_size;
 
 
 			}
+			read_size+=end_index-start_index;
 		}
 		if(fat->next_block!=0){
 			current_block=fat->next_block;
@@ -430,43 +437,63 @@ size_t read_data(void* fsptr,size_t fssize,int* errnoptr,size_t block,size_t sta
 	return -1;
 
 }
-int write_data(void* fsptr,size_t fssize,int* errnoptr,size_t block_number,size_t start,size_t write_len,const void* to_write){
-	size_t current_block=block_number;
+int write_byte(void* fsptr,size_t fssize,int*errnoptr,size_t start_block,size_t write_addr,unsigned char to_write){
 	size_t read_size=0;
-	int will_break=0;
-	size_t bytes_written=0;
-	while(will_break==0){
-		size_t t_mem_size;
-		char* data = load_block(fsptr,fssize,errnoptr,current_block,&t_mem_size);
-		//checking if write is in block
-		if(read_size+t_mem_size>=start){
-			size_t write_start_in_block=start+bytes_written-read_size;
-			size_t write_end_index = min(BLOCK_SIZE,write_start_in_block+write_len);
-			size_t t_to_write = write_end_index-write_start_in_block;
-			memcpy(data,to_write+bytes_written,t_to_write);
-			struct FAT_ENTRY* fat = get_fat(fsptr,fssize,errnoptr,current_block);
-			fat->used_size=max(write_end_index,fat->used_size);
-			bytes_written+=t_to_write;
-			//if done writing
-			if(write_start_in_block+write_len<BLOCK_SIZE){
-				return 0;
-
-			}
-		}
-		struct FAT_ENTRY* fat = get_fat(fsptr,fssize,errnoptr,current_block);
-		if(fat->next_block==0){
-			size_t t_next_block = alloc_block(fsptr,fssize,errnoptr);
+	while(1){
+		struct FAT_ENTRY* fat = get_fat(fsptr,fssize,errnoptr,start_block);
+		//if is in current block
+		if(write_addr>=read_size && write_addr<read_size+fat->used_size){
+			size_t t_mem_size;
+			unsigned char* data = load_block(fsptr,fssize,errnoptr,start_block,&t_mem_size);
 			if(*errnoptr!=0){
 				return -1;
 			}
-			fat->next_block=t_next_block;
-		}
-		current_block = fat->next_block;
+			data[write_addr-read_size]=to_write;
+			return 0;
+		}else if(write_addr>=read_size && write_addr<read_size+BLOCK_SIZE){
+			//if inside of block but not allocated
+			size_t addr_in_block = write_addr-read_size;
+			size_t t_mem_size;
+			unsigned char* data = load_block(fsptr,fssize,errnoptr,start_block,&t_mem_size);
+			if(*errnoptr!=0){
+				return -1;
+			}
+			memset(data+fat->used_size,0,addr_in_block-fat->used_size);
+			data[addr_in_block]=to_write;
+			//updating size;
+			fat->used_size=addr_in_block+1;
+		}else{
+			//getting next in block
+			read_size+=BLOCK_SIZE;
+			if(fat->next_block!=0){
+				start_block=fat->next_block;
+			}else{
+				size_t t_block = alloc_block(fsptr,fssize,errnoptr);
+				if(*errnoptr!=0){
+					return -1;
+				}
+				start_block=t_block;
+				fat->next_block=start_block;
 
+			}
+
+		}
 
 	}
-	//failed somehow should never get here
-	return -1;
+
+}
+int write_data(void* fsptr,size_t fssize,int* errnoptr,size_t block_number,size_t start,size_t write_len,const char* to_write){
+	size_t bytes_written=0;
+	for(size_t i=0;i<write_len;i++){
+		write_byte(fsptr,fssize,errnoptr,block_number,i+start,to_write[i]);
+		if(*errnoptr!=0){
+			errnoptr=0;
+			return bytes_written;
+		}
+		bytes_written++;
+
+	}
+	return bytes_written;
 
 }
 //reallocates dat to proper size
@@ -482,11 +509,13 @@ int append_data(void *fsptr,size_t fssize,int* errnoptr,size_t block,size_t appe
 			size_t index_in_block=0;
 			void* memory = load_block(fsptr,fssize,errnoptr,block,&index_in_block);
 			//first copy to end of current block
-			size_t copy_size = min(BLOCK_SIZE-index_in_block,append_size+index_in_block);
-			memcpy(memory+index_in_block,new_data,copy_size);
-			current_block->used_size=copy_size+index_in_block;
-			if(append_size+index_in_block<BLOCK_SIZE-index_in_block){
-				return 0;
+			if(index_in_block<BLOCK_SIZE){	
+				size_t copy_size = min(BLOCK_SIZE-index_in_block,append_size);
+				memcpy(memory+index_in_block,new_data,copy_size);
+				current_block->used_size=copy_size+index_in_block;
+				if(append_size+index_in_block<BLOCK_SIZE-index_in_block){
+					return 0;
+				}
 			}
 			while(1){
 				current_block->next_block=alloc_block(fsptr,fssize,errnoptr);
@@ -624,7 +653,6 @@ char* get_parent_path(const char* str){
 		}
 	}
 	char* data = calloc(last+1,1);
-	printf("last index: %li\n",last);
 	if(last!=0){
 		memcpy(data,str+1,last-1);
 		data[last]=0;
@@ -642,8 +670,7 @@ char* get_child_path(const char* str){
 		}
 	}
 	size_t data_size = strlen(str)-last;
-	char* data = calloc(data_size-last,1);
-	printf("last index: %li\n",last);
+	char* data = calloc(data_size,1);
 	memcpy(data,str+last+1,data_size-1);
 	data[data_size-1]=0;
 	return data;
@@ -664,10 +691,8 @@ struct DirEntry find_path(void *fsptr,size_t fssize,int *errnoptr,const char *pa
 	struct DirEntry* dir = NULL;
 	size_t dir_size=0;
 	char *t_path = get_parent_path(path);
-	printf("parent path:%s\n",t_path);
 	char* fname = strtok(t_path,"/");
 	char* child_name = get_child_path(path);
-	printf("fname: %s\n",fname);
 	if(fname==NULL){
 		//loading root block
 		dir = load_mem(fsptr,fssize,errnoptr,0,&dir_size);
@@ -742,10 +767,34 @@ void remove_data(void* fsptr,size_t fssize,int* errnoptr,size_t* block,size_t st
 	size_t size_read = 0;
 
 	void* data = load_mem(fsptr,fssize,errnoptr,*block,&size_read);
+	if(*errnoptr!=0){
+		return;
+
+	}
 	//moving data
+	if(size_read<start_index+size_remove){
+		*errnoptr=-1;
+		return;
+
+	}
 	memmove(data+start_index,data+start_index+size_remove,size_read-(start_index+size_remove));
 	free_data(fsptr,fssize,errnoptr,*block);
-	alloc_data(fsptr,fssize,errnoptr,data,size_read-size_remove);
+	if(*errnoptr!=0){
+		return;
+
+	}
+	struct FAT_ENTRY *fat = get_fat(fsptr,fssize,errnoptr,*block);
+	if(*errnoptr!=0){
+		return;
+
+	}
+	fat->is_used=1;
+	write_data(fsptr,fssize,errnoptr,*block,0,size_read-size_remove,data);
+	if(*errnoptr!=0){
+		return;
+
+	}
+	
 	free(data);
 	return;
 
@@ -1102,12 +1151,8 @@ int __myfs_mkdir_implem(void *fsptr, size_t fssize, int *errnoptr,
 */
 int __myfs_rename_implem(void *fsptr, size_t fssize, int *errnoptr,
                          const char *from, const char *to) {
-  /* STUB */
-	printf("rename from path: %s to path: %s\n",from,to);
-	size_t last = strrchr(from,'/')-from;
-	char* t_path = calloc(last+1,1);
-	memcpy(t_path,from,last);
-	t_path[last+1]=0;
+	printf("*** rename *** from path: %s to path: %s\n",from,to);
+	char* t_path = get_parent_path(from);
 	struct DirEntry f= find_path(fsptr,fssize,errnoptr,from);
 	
 	struct DirEntry parent= find_path(fsptr,fssize,errnoptr,t_path);
@@ -1115,22 +1160,33 @@ int __myfs_rename_implem(void *fsptr, size_t fssize, int *errnoptr,
 	struct DirEntry* dirs = load_mem(fsptr,fssize,errnoptr,parent.file_block,&dirs_size);
 	struct DirEntry file;
 
+	int found=0;
 	for(size_t i=0;i<dirs_size/sizeof(struct DirEntry);i++){
 		if(strcmp(f.file_name,dirs[i].file_name)==0){
 
 			remove_data(fsptr,fssize,errnoptr,&parent.file_block,i*sizeof(struct DirEntry),sizeof(struct DirEntry));
 			copy_dir_entry(&file,dirs+i);
+			char* to_name = get_child_path(to);
+
+			strncpy(file.file_name,to_name,MAX_NAME_SIZE);
+			free(to_name);
+			found=1;
 			break;
 
 
 		}
 	}
-	size_t to_last = strrchr(to,'/')-to;
-	char* to_path = calloc(to_last+1,1);
-	memcpy(to_path,to,to_last);
-	to_path[to_last+1]=0;
+	if(found==0){
+		free(t_path);
+		free(dirs);
+		*errnoptr=EBADF;
+	
+	}
+	char* to_path = get_parent_path(to);
 	struct DirEntry new_parent= find_path(fsptr,fssize,errnoptr,to_path);
+	
 	append_data(fsptr,fssize,errnoptr,new_parent.file_block,sizeof(struct DirEntry),&file);
+	free(to_path);
 	return 0;
 }
 
@@ -1229,6 +1285,11 @@ int __myfs_read_implem(void *fsptr, size_t fssize, int *errnoptr,
 	printf("***read*** path: %s\n",path);
 	*errnoptr=0;
 	struct DirEntry f= find_path(fsptr,fssize,errnoptr,path);
+	if(f.file_type==Directory){
+		*errnoptr=EINVAL;
+		return -1;
+
+	}
 	if(*errnoptr!=0){
 		return -1;
 	}
@@ -1261,6 +1322,7 @@ int __myfs_write_implem(void *fsptr, size_t fssize, int *errnoptr,
 	if(*errnoptr!=0){
 		return -1;
 	}
+
 	write_data(fsptr,fssize,errnoptr,f.file_block,offset,size,buf);
 	if(*errnoptr!=0){
 		printf("write failed\n");
