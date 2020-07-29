@@ -7,3 +7,4 @@ the next child block.
 # Diffiulties
 I had a lot of difficulty debugging my file system and making sure that it does not corrupt itself.
 # Testing
+I tested the code by attempting to use the file system in a normal way. When some strange behivor was found it was noted and it was duplicated with simpler actions inoder to find out exactly what broke.
