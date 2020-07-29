@@ -419,6 +419,7 @@ size_t read_data(void* fsptr,size_t fssize,int* errnoptr,size_t block,size_t sta
 				end_index=start_index+read_len;
 				will_break=1;
 			}
+			read_size+=end_index-start_index;
 			memcpy(buff,t_data+start_index,end_index-start_index);
 			if(end_index-read_size>=read_len){
 				return read_size;
@@ -602,14 +603,17 @@ int write_path(void *fsptr,size_t fssize,int *errnoptr,const char *path,struct D
 	char *t_path = calloc(strlen(path),1);
 	strcpy(t_path,path);
 	char* fname = strtok(t_path,"/");
+	dir = load_mem(fsptr,fssize,errnoptr,current_block,&dir_size);
+	dir_size/=sizeof(struct DirEntry);
 	while(fname!=NULL){
-		free(dir);
-		dir = load_mem(fsptr,fssize,errnoptr,current_block,&dir_size);
 		int found=0;
 		for(ssize_t i=0;i<dir_size;i++){
-			if(strcmp(fname,dir[i].file_name)==0){
+			if(strncmp(fname,dir[i].file_name,MAX_NAME_SIZE)==0){
 				if(dir[i].file_type==Directory){
 					current_block=dir[i].file_block;
+					free(dir);
+					dir = load_mem(fsptr,fssize,errnoptr,current_block,&dir_size);
+					dir_size/=sizeof(struct DirEntry);
 					found=1;
 				}else{
 					*errnoptr=ENOTDIR;
@@ -654,7 +658,7 @@ char* get_parent_path(const char* str){
 	}
 	char* data = calloc(last+1,1);
 	if(last!=0){
-		memcpy(data,str+1,last-1);
+		memcpy(data,str,last);
 		data[last]=0;
 	}else{
 		data[0]=0;
@@ -698,15 +702,17 @@ struct DirEntry find_path(void *fsptr,size_t fssize,int *errnoptr,const char *pa
 		dir = load_mem(fsptr,fssize,errnoptr,0,&dir_size);
 		dir_size/=sizeof(struct DirEntry);
 	}
+	dir = load_mem(fsptr,fssize,errnoptr,current_block,&dir_size);
+	dir_size/=sizeof(struct DirEntry);
 	while(fname!=NULL){
-		free(dir);
-		dir = load_mem(fsptr,fssize,errnoptr,current_block,&dir_size);
-		dir_size/=sizeof(struct DirEntry);
 		int found=0;
 		for(ssize_t i=0;i<dir_size;i++){
 			if(strcmp(fname,dir[i].file_name)==0){
 				if(dir[i].file_type==Directory){
 					current_block=dir[i].file_block;
+					free(dir);
+					dir = load_mem(fsptr,fssize,errnoptr,current_block,&dir_size);
+					dir_size/=sizeof(struct DirEntry);
 					found=1;
 				}else{
 					*errnoptr=ENOTDIR;
