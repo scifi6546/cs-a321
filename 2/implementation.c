@@ -262,11 +262,10 @@ struct FAT_ENTRY{
 size_t get_fat_size(void *fsptr,size_t fssize,int *errnoptr){
 	return (fssize-HEADER_SIZE)/(FAT_SIZE+BLOCK_SIZE);
 }
-enum FileType{Directory,Link,File};
+enum FileType{Directory,File};
 struct DirEntry{
 	char file_name[MAX_NAME_SIZE];
 	enum FileType file_type;
-	char linked_file[MAX_PATH_LEN];
 	size_t file_block;
 	struct timespec atime;
 	struct timespec mtime;
@@ -274,7 +273,6 @@ struct DirEntry{
 void copy_dir_entry(struct DirEntry* dest,struct DirEntry *src){
 	memcpy(dest->file_name,src->file_name,MAX_NAME_SIZE);
 	dest->file_type=src->file_type;
-	memcpy(dest->linked_file,src->linked_file,MAX_PATH_LEN);
 	dest->file_block=src->file_block;
 	dest->atime = src->atime;
 	dest->mtime = src->mtime;
