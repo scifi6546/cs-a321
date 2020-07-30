@@ -9,7 +9,7 @@
   University of Alaska Anchorage, College of Engineering.
 
   Contributors: Christoph Lauter
-                ... and
+                ... Nicholas Alexeev
                 ...
 
   and based on 
@@ -262,11 +262,10 @@ struct FAT_ENTRY{
 size_t get_fat_size(void *fsptr,size_t fssize,int *errnoptr){
 	return (fssize-HEADER_SIZE)/(FAT_SIZE+BLOCK_SIZE);
 }
-enum FileType{Directory,Link,File};
+enum FileType{Directory,File};
 struct DirEntry{
 	char file_name[MAX_NAME_SIZE];
 	enum FileType file_type;
-	char linked_file[MAX_PATH_LEN];
 	size_t file_block;
 	struct timespec atime;
 	struct timespec mtime;
@@ -274,7 +273,6 @@ struct DirEntry{
 void copy_dir_entry(struct DirEntry* dest,struct DirEntry *src){
 	memcpy(dest->file_name,src->file_name,MAX_NAME_SIZE);
 	dest->file_type=src->file_type;
-	memcpy(dest->linked_file,src->linked_file,MAX_PATH_LEN);
 	dest->file_block=src->file_block;
 	dest->atime = src->atime;
 	dest->mtime = src->mtime;
@@ -400,7 +398,6 @@ size_t read_data(void* fsptr,size_t fssize,int* errnoptr,size_t block,size_t sta
 	size_t current_block=block;
 	size_t read_size=0;
 	size_t write_size=0;
-	int will_break=0;
 	while(1){
 		struct FAT_ENTRY* fat =get_fat(fsptr,fssize,errnoptr,current_block);
 		if(*errnoptr!=0){
@@ -491,18 +488,74 @@ int write_byte(void* fsptr,size_t fssize,int*errnoptr,size_t start_block,size_t 
 
 }
 int write_data(void* fsptr,size_t fssize,int* errnoptr,size_t block_number,size_t start,size_t write_len,const char* to_write){
+	size_t current_block = block_number;
 	size_t bytes_written=0;
-	for(size_t i=0;i<write_len;i++){
-		write_byte(fsptr,fssize,errnoptr,block_number,i+start,to_write[i]);
+	size_t bytes_traversed=0;
+	while(1){
+		struct FAT_ENTRY* fat = get_fat(fsptr,fssize,errnoptr,current_block);
 		if(*errnoptr!=0){
-			errnoptr=0;
-			return bytes_written;
+			return -1;
 		}
-		bytes_written++;
+		//if block is smaller then need be
+		if(fat->used_size<BLOCK_SIZE){
+			//then set it to be the size needed
+			size_t old_used_size = fat->used_size;
 
+			fat->used_size = min(BLOCK_SIZE,write_len+start-bytes_traversed);
+			size_t temp;
+			void* disk_data = load_block(fsptr,fssize,errnoptr,current_block,&temp);
+			if(*errnoptr!=0){
+				return -1;
+			}
+
+			memset(disk_data+old_used_size,0,fat->used_size-old_used_size);
+
+		}
+		//if write is in block
+		if(bytes_traversed+fat->used_size>start){
+			size_t write_start = 0;
+			//if write start is not at start of block
+			if(bytes_traversed<start){
+				write_start=start-bytes_traversed;
+			}
+			//if write_start is before block
+			if(bytes_traversed>start){
+				write_start=0;
+			}
+			size_t write_end = fat->used_size;
+			//if write end is not at end of block
+			if(bytes_written+fat->used_size<write_len){
+				write_end = start+(write_len-bytes_written);
+			}
+			size_t temp;
+			void* disk_data = load_block(fsptr,fssize,errnoptr,current_block,&temp);
+			if(*errnoptr!=0){
+				return -1;
+			}
+			memcpy(disk_data,to_write+bytes_written,write_end-write_start);
+			bytes_written+=write_end-write_start;
+			if(bytes_written==write_len){
+				return bytes_written;
+
+			}
+		}
+		bytes_traversed+=fat->used_size;
+		if(fat->next_block!=0){
+			current_block=fat->next_block;
+		}else{
+			size_t t_block = alloc_block(fsptr,fssize,errnoptr);
+			struct FAT_ENTRY *t = get_fat(fsptr,fssize,errnoptr,t_block);
+			t->used_size=0;
+			if(*errnoptr!=0){
+				return bytes_written;
+			}
+			current_block=t_block;
+			fat->next_block=current_block;
+
+		}
+
+		
 	}
-	return bytes_written;
-
 }
 //reallocates dat to proper size
 int append_data(void *fsptr,size_t fssize,int* errnoptr,size_t block,size_t append_size,void* new_data){
